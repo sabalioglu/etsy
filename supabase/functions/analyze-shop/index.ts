@@ -38,31 +38,96 @@ interface ScoredProduct extends ProductData {
   tier: string;
 }
 
-// Mock Apify API response - simulates real Etsy shop data
-function mockApifyResponse(shopName: string, numberOfProducts: number): ProductData[] {
-  const products: ProductData[] = [];
-  
-  for (let i = 0; i < numberOfProducts; i++) {
-    const basePrice = Math.floor(Math.random() * 100) + 10;
-    const hasDiscount = Math.random() > 0.5;
-    const discountPercentage = hasDiscount ? Math.floor(Math.random() * 50) + 10 : 0;
-    const price = hasDiscount ? basePrice * (1 - discountPercentage / 100) : basePrice;
-    
-    products.push({
-      productId: `etsy-${shopName}-${i + 1}`,
-      title: `Product ${i + 1} from ${shopName}`,
-      url: `https://www.etsy.com/listing/${Math.floor(Math.random() * 1000000)}`,
-      price: Math.round(price * 100) / 100,
-      originalPrice: hasDiscount ? basePrice : undefined,
-      discountPercentage: hasDiscount ? discountPercentage : undefined,
-      imageUrl: `https://i.etsystatic.com/placeholder-${i + 1}.jpg`,
-      rating: Math.round((Math.random() * 2 + 3) * 10) / 10, // 3.0 - 5.0
-      reviewsCount: Math.floor(Math.random() * 1000),
-      salesCount: Math.floor(Math.random() * 5000),
-    });
+// Fetch real shop data from Apify Etsy Scraper
+async function fetchShopDataFromApify(shopName: string, numberOfProducts: number, apifyApiKey: string): Promise<ProductData[]> {
+  // Start Apify actor run
+  const actorRunResponse = await fetch(
+    'https://api.apify.com/v2/acts/misceres~etsy-scraper/runs',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apifyApiKey}`,
+      },
+      body: JSON.stringify({
+        startUrls: [{ url: `https://www.etsy.com/shop/${shopName}` }],
+        maxItems: numberOfProducts,
+        scrapeProductDetails: true,
+        proxy: {
+          useApifyProxy: true,
+          apifyProxyGroups: ['RESIDENTIAL'],
+        },
+      }),
+    }
+  );
+
+  if (!actorRunResponse.ok) {
+    const errorText = await actorRunResponse.text();
+    throw new Error(`Apify actor start failed: ${actorRunResponse.status} - ${errorText}`);
   }
-  
-  return products;
+
+  const runData = await actorRunResponse.json();
+  const runId = runData.data.id;
+  const defaultDatasetId = runData.data.defaultDatasetId;
+
+  // Poll for completion
+  let isFinished = false;
+  let attempts = 0;
+  const maxAttempts = 60;
+
+  while (!isFinished && attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    const statusResponse = await fetch(
+      `https://api.apify.com/v2/actor-runs/${runId}`,
+      {
+        headers: { 'Authorization': `Bearer ${apifyApiKey}` },
+      }
+    );
+
+    const statusData = await statusResponse.json();
+    const status = statusData.data.status;
+
+    if (status === 'SUCCEEDED') {
+      isFinished = true;
+    } else if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
+      throw new Error(`Apify run ${status.toLowerCase()}`);
+    }
+
+    attempts++;
+  }
+
+  if (!isFinished) {
+    throw new Error('Apify scraper timeout after 5 minutes');
+  }
+
+  // Fetch results from dataset
+  const datasetResponse = await fetch(
+    `https://api.apify.com/v2/datasets/${defaultDatasetId}/items`,
+    {
+      headers: { 'Authorization': `Bearer ${apifyApiKey}` },
+    }
+  );
+
+  if (!datasetResponse.ok) {
+    throw new Error('Failed to fetch Apify results');
+  }
+
+  const items = await datasetResponse.json();
+
+  // Transform Apify results to our ProductData format
+  return items.map((item: any) => ({
+    productId: item.listingId || item.id || `product-${Math.random()}`,
+    title: item.title || 'Unknown Product',
+    url: item.url || '',
+    price: parseFloat(item.price?.value || item.price || 0),
+    originalPrice: item.originalPrice ? parseFloat(item.originalPrice) : undefined,
+    discountPercentage: item.discount ? parseFloat(item.discount) : undefined,
+    imageUrl: item.images?.[0] || item.image || '',
+    rating: parseFloat(item.rating || 0),
+    reviewsCount: parseInt(item.reviewsCount || item.reviews || 0),
+    salesCount: parseInt(item.salesCount || item.sales || item.numFavorers || 0),
+  }));
 }
 
 // Scoring algorithm based on n8n workflow
@@ -191,8 +256,14 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
-      // Simulate calling Apify API (mock data for now)
-      const products = mockApifyResponse(shopName, numberOfProducts);
+      // Get Apify API key from environment
+      const apifyApiKey = Deno.env.get('APIFY_API_KEY');
+      if (!apifyApiKey) {
+        throw new Error('APIFY_API_KEY environment variable is not set');
+      }
+
+      // Fetch real shop data from Apify
+      const products = await fetchShopDataFromApify(shopName, numberOfProducts, apifyApiKey);
 
       // Calculate scores for each product
       const scoredProducts: ScoredProduct[] = products.map(product => {

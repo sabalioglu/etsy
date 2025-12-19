@@ -27,38 +27,6 @@ interface GeneratedContent {
   tags: string[];
 }
 
-// Mock AI-generated content when no API key is available
-function mockAIGeneration(product: ProductToClone): GeneratedContent {
-  const prefixes = ['Handcrafted', 'Premium', 'Unique', 'Custom', 'Artisan'];
-  const suffixes = ['Collection', 'Design', 'Creation', 'Piece', 'Item'];
-  
-  const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
-  const suffix = suffixes[Math.floor(Math.random() * suffixes.length)];
-  
-  // Generate new title
-  const baseTitle = product.product_title
-    .replace(/\b(handmade|custom|unique|vintage)\b/gi, '')
-    .trim();
-  const newTitle = `${prefix} ${baseTitle} - ${suffix}`;
-  
-  // Generate new description
-  const newDescription = `Introducing our ${newTitle.toLowerCase()}!\n\nThis exquisite piece combines quality craftsmanship with modern design sensibilities. Each item is carefully created with attention to detail and made to bring joy to your life.\n\nKey Features:\n- High-quality materials\n- Unique design elements\n- Perfect for gifts or personal use\n- Made with care and precision\n\nProduct Details:\n${product.description.split('\n')[0]}\n\nWhy Choose This Product?\nOur commitment to quality and customer satisfaction sets us apart. Each piece is inspected before shipping to ensure it meets our high standards.\n\nCare Instructions:\nPlease handle with care and follow the included care guide to maintain the beauty of your purchase.`;
-  
-  // Generate new tags
-  const additionalTags = ['premium', 'quality', 'gift-ready', 'trending', 'bestseller'];
-  const existingTags = product.tags || [];
-  const newTags = [
-    ...existingTags.slice(0, 3),
-    ...additionalTags.filter(() => Math.random() > 0.5).slice(0, 3),
-  ].slice(0, 13); // Etsy allows up to 13 tags
-  
-  return {
-    title: newTitle,
-    description: newDescription,
-    tags: newTags,
-  };
-}
-
 // Call Google Gemini API for content generation
 async function generateWithGemini(product: ProductToClone, apiKey: string): Promise<GeneratedContent> {
   const prompt = `You are an expert Etsy product listing optimizer. Create a new, unique product listing based on the following product information. Make it compelling and SEO-friendly.
@@ -179,9 +147,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Get Google Gemini API key (optional)
+    // Get Google Gemini API key (required)
     const geminiApiKey = Deno.env.get('GOOGLE_GEMINI_API_KEY');
-    const useAI = !!geminiApiKey;
+    if (!geminiApiKey) {
+      return new Response(
+        JSON.stringify({ error: 'GOOGLE_GEMINI_API_KEY environment variable is not set' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Fetch products to clone
     const { data: products, error: productsError } = await supabase
@@ -206,22 +179,9 @@ Deno.serve(async (req: Request) => {
 
     for (const product of products) {
       try {
-        // Generate new content
-        let generatedContent: GeneratedContent;
-        let tokensUsed = 0;
-
-        if (useAI) {
-          try {
-            generatedContent = await generateWithGemini(product, geminiApiKey!);
-            tokensUsed = Math.floor(generatedContent.description.length / 4); // Rough estimate
-          } catch (aiError) {
-            console.error('AI generation failed, using mock:', aiError);
-            generatedContent = mockAIGeneration(product);
-          }
-        } else {
-          generatedContent = mockAIGeneration(product);
-        }
-
+        // Generate new content using Gemini AI
+        const generatedContent = await generateWithGemini(product, geminiApiKey);
+        const tokensUsed = Math.floor(generatedContent.description.length / 4);
         totalTokensUsed += tokensUsed;
 
         // Create cloned product record
@@ -233,7 +193,7 @@ Deno.serve(async (req: Request) => {
             generated_title: generatedContent.title,
             generated_description: generatedContent.description,
             generated_tags: generatedContent.tags,
-            ai_model_used: useAI ? 'google-gemini-1.5-pro' : 'mock',
+            ai_model_used: 'google-gemini-1.5-pro',
             status: 'completed',
             completed_at: new Date().toISOString(),
           })
@@ -282,14 +242,14 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // Log API usage if AI was used
-    if (useAI && totalTokensUsed > 0) {
+    // Log API usage
+    if (totalTokensUsed > 0) {
       await supabase.from('api_usage_logs').insert({
         user_id: user.id,
         api_provider: 'google-gemini',
         endpoint: 'gemini-1.5-pro',
         tokens_used: totalTokensUsed,
-        cost_estimate: (totalTokensUsed / 1000) * 0.01, // Rough estimate
+        cost_estimate: (totalTokensUsed / 1000) * 0.01,
         success: true,
       });
     }
@@ -302,7 +262,6 @@ Deno.serve(async (req: Request) => {
           totalRequested: productIds.length,
           successfullyCloned: clonedProducts.length,
           failed: productIds.length - clonedProducts.length,
-          usedAI: useAI,
           tokensUsed: totalTokensUsed,
           products: clonedProducts,
         },
