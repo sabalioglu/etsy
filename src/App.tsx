@@ -1,9 +1,25 @@
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Layout } from './components/layout/Layout'
+import { Dashboard } from './pages/Dashboard'
+import { ShopAnalyzer } from './pages/ShopAnalyzer'
+import { ProductSelection } from './pages/ProductSelection'
+import { ProductCloner } from './pages/ProductCloner'
+import { History } from './pages/History'
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <p>Start prompting (or editing) to see magic happen :)</p>
-    </div>
-  );
+    <BrowserRouter>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/analyze" element={<ShopAnalyzer />} />
+          <Route path="/products" element={<ProductSelection />} />
+          <Route path="/clone" element={<ProductCloner />} />
+          <Route path="/history" element={<History />} />
+        </Routes>
+      </Layout>
+    </BrowserRouter>
+  )
 }
 
-export default App;
+export default App
