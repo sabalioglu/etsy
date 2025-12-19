@@ -187,3 +187,136 @@ export async function subscribeToClonedProducts(userId: string, callback: (paylo
     )
     .subscribe()
 }
+
+export async function generateProductImages(data: {
+  productId?: string
+  listingId: string
+  productTitle: string
+  productUrl: string
+  images: Array<{ index: number; url: string }>
+}) {
+  const response = await supabase.functions.invoke('generate-product-images', {
+    body: data
+  })
+
+  if (response.error) throw response.error
+  return response.data
+}
+
+export async function getImageGenerationJobs() {
+  const { data, error } = await supabase
+    .from('image_generation_jobs')
+    .select(`
+      *,
+      generated_images(*)
+    `)
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data
+}
+
+export async function getImageGenerationJob(jobId: string) {
+  const { data, error } = await supabase
+    .from('image_generation_jobs')
+    .select(`
+      *,
+      generated_images(*)
+    `)
+    .eq('id', jobId)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function subscribeToImageJob(jobId: string, callback: (payload: any) => void) {
+  return supabase
+    .channel(`image-job:${jobId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'image_generation_jobs',
+        filter: `id=eq.${jobId}`
+      },
+      callback
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: '*',
+        schema: 'public',
+        table: 'generated_images',
+        filter: `job_id=eq.${jobId}`
+      },
+      callback
+    )
+    .subscribe()
+}
+
+export function extractImagesFromProduct(product: any): Array<{ index: number; url: string }> {
+  const images: Array<{ index: number; url: string }> = []
+
+  if (product.images && typeof product.images === 'object') {
+    if (Array.isArray(product.images)) {
+      product.images.forEach((url: string, index: number) => {
+        if (url && url.trim() && url.startsWith('http')) {
+          images.push({ index: index + 1, url: url.trim() })
+        }
+      })
+    } else {
+      for (let i = 1; i <= 13; i++) {
+        const url = product.images[`Image ${i} URLs`] || product.images[`image_${i}`] || product.images[i]
+        if (url && typeof url === 'string' && url.trim() && url.startsWith('http')) {
+          images.push({ index: i, url: url.trim() })
+        }
+      }
+    }
+  }
+
+  return images
+}
+
+export async function generateImagesFromProducts(products: any[]) {
+  const results = []
+
+  for (const product of products) {
+    const images = extractImagesFromProduct(product)
+
+    if (images.length === 0) {
+      results.push({
+        success: false,
+        productId: product.id,
+        error: 'No valid images found'
+      })
+      continue
+    }
+
+    try {
+      const result = await generateProductImages({
+        productId: product.id,
+        listingId: product.original_product_id || product.product_id || product.id,
+        productTitle: product.product_title || 'Untitled Product',
+        productUrl: product.product_url || '',
+        images
+      })
+
+      results.push({
+        success: true,
+        productId: product.id,
+        jobId: result.jobId,
+        totalImages: images.length
+      })
+    } catch (error) {
+      results.push({
+        success: false,
+        productId: product.id,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  return results
+}

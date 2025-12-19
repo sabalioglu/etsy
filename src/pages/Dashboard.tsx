@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { TrendingUp, Package, Copy, Clock, ArrowRight, Search, Upload } from 'lucide-react'
+import { TrendingUp, Package, Copy, Clock, ArrowRight, Search, Upload, Sparkles } from 'lucide-react'
 import Card from '../components/shared/Card'
 import Button from '../components/shared/Button'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import Badge, { type BadgeStatus } from '../components/shared/Badge'
-import { getShopAnalyses, getClonedProducts } from '../lib/api'
+import { getShopAnalyses, getClonedProducts, getImageGenerationJobs } from '../lib/api'
 
 interface Stats {
   totalAnalyses: number
@@ -16,7 +16,7 @@ interface Stats {
 
 interface Activity {
   id: string
-  type: 'analysis' | 'clone' | 'upload'
+  type: 'analysis' | 'clone' | 'upload' | 'image-generation'
   title: string
   description: string
   timestamp: string
@@ -41,9 +41,10 @@ export function Dashboard() {
   const loadDashboardData = async () => {
     try {
       setLoading(true)
-      const [analyses, clonedProducts] = await Promise.all([
+      const [analyses, clonedProducts, imageJobs] = await Promise.all([
         getShopAnalyses(),
         getClonedProducts(),
+        getImageGenerationJobs(),
       ])
 
       // Calculate stats
@@ -81,6 +82,18 @@ export function Dashboard() {
           description: product.generated_title || 'New product',
           timestamp: product.created_at,
           status: product.status as any,
+        })
+      })
+
+      // Add image generation jobs
+      imageJobs.slice(0, 5).forEach((job: any) => {
+        recentActivities.push({
+          id: job.id,
+          type: 'image-generation',
+          title: 'AI Images Generated',
+          description: `${job.images_completed}/${job.total_images} images completed`,
+          timestamp: job.created_at,
+          status: job.status as any,
         })
       })
 
@@ -257,6 +270,23 @@ export function Dashboard() {
               <ArrowRight className="w-5 h-5 text-gray-400" />
             </div>
           </Button>
+
+          <Button
+            variant="secondary"
+            className="justify-start h-auto py-4"
+            onClick={() => navigate('/generate-images')}
+          >
+            <div className="flex items-center w-full">
+              <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center mr-4">
+                <Sparkles className="w-5 h-5 text-amber-600" />
+              </div>
+              <div className="flex-1 text-left">
+                <div className="font-semibold text-gray-900">Generate AI Images</div>
+                <div className="text-sm text-gray-600">Create variations</div>
+              </div>
+              <ArrowRight className="w-5 h-5 text-gray-400" />
+            </div>
+          </Button>
         </div>
       </Card>
 
@@ -284,11 +314,13 @@ export function Dashboard() {
               >
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
                   activity.type === 'analysis' ? 'bg-blue-100' :
-                  activity.type === 'clone' ? 'bg-green-100' : 'bg-purple-100'
+                  activity.type === 'clone' ? 'bg-green-100' :
+                  activity.type === 'image-generation' ? 'bg-amber-100' : 'bg-purple-100'
                 }`}>
                   {activity.type === 'analysis' && <Search className="w-5 h-5 text-blue-600" />}
                   {activity.type === 'clone' && <Copy className="w-5 h-5 text-green-600" />}
                   {activity.type === 'upload' && <Upload className="w-5 h-5 text-purple-600" />}
+                  {activity.type === 'image-generation' && <Sparkles className="w-5 h-5 text-amber-600" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center space-x-2">
