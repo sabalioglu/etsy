@@ -115,19 +115,29 @@ async function fetchShopDataFromApify(shopName: string, numberOfProducts: number
 
   const items = await datasetResponse.json();
 
+  console.log('Apify returned items count:', items.length);
+  console.log('Sample item structure:', JSON.stringify(items[0], null, 2));
+
   // Transform Apify results to our ProductData format
-  return items.map((item: any) => ({
-    productId: item.listingId || item.id || `product-${Math.random()}`,
-    title: item.title || 'Unknown Product',
-    url: item.url || '',
-    price: parseFloat(item.price?.value || item.price || 0),
-    originalPrice: item.originalPrice ? parseFloat(item.originalPrice) : undefined,
-    discountPercentage: item.discount ? parseFloat(item.discount) : undefined,
-    imageUrl: item.images?.[0] || item.image || '',
-    rating: parseFloat(item.rating || 0),
-    reviewsCount: parseInt(item.reviewsCount || item.reviews || 0),
-    salesCount: parseInt(item.salesCount || item.sales || item.numFavorers || 0),
-  }));
+  return items.map((item: any, index: number) => {
+    try {
+      return {
+        productId: item.listingId || item.id || item.listing_id || `product-${Date.now()}-${index}`,
+        title: item.title || item.name || 'Unknown Product',
+        url: item.url || item.link || '',
+        price: parseFloat(item.price?.value || item.price || item.priceValue || 0),
+        originalPrice: item.originalPrice || item.original_price ? parseFloat(item.originalPrice || item.original_price) : undefined,
+        discountPercentage: item.discount || item.discountPercentage ? parseFloat(item.discount || item.discountPercentage) : undefined,
+        imageUrl: item.images?.[0] || item.image || item.imageUrl || item.img || '',
+        rating: parseFloat(item.rating || item.averageRating || 0),
+        reviewsCount: parseInt(item.reviewsCount || item.reviews || item.numReviews || item.reviewCount || 0, 10),
+        salesCount: parseInt(item.salesCount || item.sales || item.numFavorers || item.orders || 0, 10),
+      };
+    } catch (error) {
+      console.error(`Error mapping item ${index}:`, error, item);
+      throw error;
+    }
+  });
 }
 
 // Scoring algorithm based on n8n workflow
@@ -263,9 +273,12 @@ Deno.serve(async (req: Request) => {
       }
 
       // Fetch real shop data from Apify
+      console.log(`Fetching shop data for ${shopName}, ${numberOfProducts} products`);
       const products = await fetchShopDataFromApify(shopName, numberOfProducts, apifyApiKey);
+      console.log(`Successfully fetched ${products.length} products from Apify`);
 
       // Calculate scores for each product
+      console.log('Calculating product scores...');
       const scoredProducts: ScoredProduct[] = products.map(product => {
         const { score, breakdown, tier } = calculateProductScore(product);
         return {
@@ -275,11 +288,13 @@ Deno.serve(async (req: Request) => {
           tier,
         };
       });
+      console.log('Scores calculated successfully');
 
       // Calculate average score
       const averageScore = scoredProducts.reduce((sum, p) => sum + p.score, 0) / scoredProducts.length;
 
       // Store analyzed products
+      console.log('Preparing products for database insertion...');
       const productsToInsert = scoredProducts.map(product => ({
         shop_analysis_id: shopAnalysis.id,
         product_id: product.productId,
@@ -297,13 +312,19 @@ Deno.serve(async (req: Request) => {
         tier: product.tier,
       }));
 
+      console.log(`Inserting ${productsToInsert.length} products into database...`);
+      console.log('Sample product to insert:', JSON.stringify(productsToInsert[0], null, 2));
+
       const { error: productsError } = await supabase
         .from('analyzed_products')
         .insert(productsToInsert);
 
       if (productsError) {
+        console.error('Database insert error:', productsError);
         throw new Error(`Failed to insert products: ${productsError.message}`);
       }
+
+      console.log('Products inserted successfully');
 
       // Update shop analysis with completion status
       const { error: updateError } = await supabase
