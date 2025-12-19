@@ -42,7 +42,7 @@ interface ScoredProduct extends ProductData {
 async function fetchShopDataFromApify(shopName: string, numberOfProducts: number, apifyApiKey: string): Promise<ProductData[]> {
   // Start Apify actor run
   const actorRunResponse = await fetch(
-    'https://api.apify.com/v2/acts/misceres~etsy-scraper/runs',
+    'https://api.apify.com/v2/acts/t9Tgk34msbnKXNHzH/runs',
     {
       method: 'POST',
       headers: {
