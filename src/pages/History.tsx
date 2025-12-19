@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Search, Calendar, Filter, Download, ExternalLink, Clock, TrendingUp, Copy, Upload } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, Calendar, Filter, Download, ExternalLink, Clock, TrendingUp, Copy, Upload, Eye } from 'lucide-react'
 import Card from '../components/shared/Card'
 import Button from '../components/shared/Button'
 import Input from '../components/shared/Input'
@@ -22,6 +23,7 @@ type FilterType = 'all' | 'analysis' | 'upload' | 'clone'
 type FilterStatus = 'all' | 'completed' | 'processing' | 'failed'
 
 export function History() {
+  const navigate = useNavigate()
   const [items, setItems] = useState<HistoryItem[]>([])
   const [filteredItems, setFilteredItems] = useState<HistoryItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -424,13 +426,22 @@ export function History() {
                       {formatTimestamp(item.timestamp)}
                     </span>
                     {item.type === 'analysis' && item.status === 'completed' && (
-                      <button
-                        onClick={() => handleExportAnalysis(item.id, item.metadata?.shopName || 'shop')}
-                        className="flex items-center text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        <Download className="w-3 h-3 mr-1" />
-                        Export CSV
-                      </button>
+                      <>
+                        <button
+                          onClick={() => navigate(`/analysis/${item.id}`)}
+                          className="flex items-center text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          <Eye className="w-3 h-3 mr-1" />
+                          View Results
+                        </button>
+                        <button
+                          onClick={() => handleExportAnalysis(item.id, item.metadata?.shopName || 'shop')}
+                          className="flex items-center text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          <Download className="w-3 h-3 mr-1" />
+                          Export CSV
+                        </button>
+                      </>
                     )}
                     {item.type === 'analysis' && item.metadata?.shopUrl && (
                       <a

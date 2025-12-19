@@ -57,7 +57,7 @@ export async function getAnalyzedProducts(shopAnalysisId: string) {
     .from('analyzed_products')
     .select('*')
     .eq('shop_analysis_id', shopAnalysisId)
-    .order('score', { ascending: false })
+    .order('advanced_sales_score', { ascending: false })
 
   if (error) throw error
   return data

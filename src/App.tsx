@@ -8,6 +8,7 @@ import { ProductSelection } from './pages/ProductSelection'
 import { ProductCloner } from './pages/ProductCloner'
 import { VideoGenerator } from './pages/VideoGenerator'
 import { History } from './pages/History'
+import { AnalysisResults } from './pages/AnalysisResults'
 
 function App() {
   return (
@@ -22,6 +23,7 @@ function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/analyze" element={<ShopAnalyzer />} />
+                  <Route path="/analysis/:analysisId" element={<AnalysisResults />} />
                   <Route path="/products" element={<ProductSelection />} />
                   <Route path="/clone" element={<ProductCloner />} />
                   <Route path="/videos" element={<VideoGenerator />} />
