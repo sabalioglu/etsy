@@ -6,6 +6,7 @@ import Input from '../components/shared/Input'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import Badge, { type BadgeStatus } from '../components/shared/Badge'
 import { getShopAnalyses, getProductUploads, getClonedProducts } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 interface HistoryItem {
   id: string
@@ -214,6 +215,46 @@ export function History() {
     URL.revokeObjectURL(url)
   }
 
+  const handleExportAnalysis = async (analysisId: string, shopName: string) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/export-analysis-csv`
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+        },
+        body: JSON.stringify({
+          analysisId,
+          format: 'csv',
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to export analysis')
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${shopName.replace(/[^a-z0-9]/gi, '_')}_analysis_${new Date().toISOString().split('T')[0]}.csv`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Error exporting analysis:', error)
+      alert('Failed to export analysis. Please try again.')
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -382,16 +423,14 @@ export function History() {
                       <Calendar className="w-3 h-3 mr-1" />
                       {formatTimestamp(item.timestamp)}
                     </span>
-                    {item.type === 'analysis' && item.metadata?.exportUrl && (
-                      <a
-                        href={item.metadata.exportUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center text-blue-600 hover:text-blue-700"
+                    {item.type === 'analysis' && item.status === 'completed' && (
+                      <button
+                        onClick={() => handleExportAnalysis(item.id, item.metadata?.shopName || 'shop')}
+                        className="flex items-center text-blue-600 hover:text-blue-700 font-medium"
                       >
                         <Download className="w-3 h-3 mr-1" />
-                        Download Report
-                      </a>
+                        Export CSV
+                      </button>
                     )}
                     {item.type === 'analysis' && item.metadata?.shopUrl && (
                       <a

@@ -443,3 +443,12 @@ export async function generateVideosFromProducts(products: any[]) {
 
   return results
 }
+
+export async function exportAnalysisCSV(analysisId: string, format: 'csv' | 'json' = 'csv') {
+  const response = await supabase.functions.invoke('export-analysis-csv', {
+    body: { analysisId, format }
+  })
+
+  if (response.error) throw response.error
+  return response.data
+}
