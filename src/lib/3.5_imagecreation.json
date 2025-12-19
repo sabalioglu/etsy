@@ -1,0 +1,693 @@
+{
+  "name": "3.5 ImageCreation",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -576,
+        1280
+      ],
+      "id": "5bb6496c-57b1-4f83-8f6f-b73e6d53159b",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PRE-PROCESS: SPLIT TO INDIVIDUAL IMAGES + METADATA\n// ============================================\n\nconst item = $input.first();\n\n// Extract listing metadata\nconst listingId = item.json['Listing ID'] || item.json.listing_id || item.json.listingId;\nconst productUrl = item.json['Product URL'] || item.json.product_url || item.json.productUrl || '';\nconst productTitle = item.json['Product Title'] || item.json.product_title || item.json.productTitle || '';\n\nconsole.log(`🎨 Pre-processing images for listing ${listingId}`);\nconsole.log(`   Product: ${productTitle}`);\nconsole.log(`   URL: ${productUrl}`);\n\n// Extract all image URLs (1-13) as INDIVIDUAL items\nconst imageItems = [];\n\nfor (let i = 1; i <= 13; i++) {\n  const url = item.json[`Image ${i} URLs`];\n  \n  // Validate URL\n  if (url && url !== '' && url !== 'None' && typeof url === 'string' && url.startsWith('http')) {\n    imageItems.push({\n      // ===== LISTING INFO =====\n      listing_id: listingId,\n      product_url: productUrl,\n      product_title: productTitle,\n      \n      // ===== IMAGE INFO =====\n      image_index: i,\n      image_url: url,\n      is_original: true,\n      \n      // ===== WORKFLOW INFO =====\n      workflow_stage: 'pre_processed',\n      processed_at: new Date().toISOString()\n    });\n  }\n}\n\nconsole.log(`✅ Found ${imageItems.length} valid images`);\nconsole.log(`   Images needed to reach 10: ${Math.max(0, 10 - imageItems.length)}`);\n\n// Warn if no images found\nif (imageItems.length === 0) {\n  console.error('❌ No valid image URLs found!');\n  throw new Error(`No valid images found for listing ${listingId}`);\n}\n\n// Return as separate items (N8N will create multiple output items)\nreturn imageItems.map(img => ({ json: img }));\n"
+      },
+      "id": "a037fe34-5b08-40ed-8f9c-1f55cf4a1d3f",
+      "name": "1️⃣ Pre-Process Images1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE SEEDREAM 4.5 RESULT - SIMPLIFIED\n// ============================================\n\nconst item = $input.first();\n\nconsole.log('📥 Parsing SeeDream 4.5 generation result...');\n\n// ============================================\n// 1. VALIDATE API RESPONSE\n// ============================================\n\nif (item.json.code !== 200 || item.json.msg !== 'success') {\n  console.error('❌ API Error:', item.json);\n  throw new Error(`Image generation failed: ${item.json.msg || 'Unknown error'}`);\n}\n\nconst data = item.json.data;\n\n// Check task state\nif (data.state === 'fail') {\n  console.error('❌ Task failed:', data.failMsg);\n  throw new Error(`Task failed: ${data.failCode} - ${data.failMsg}`);\n}\n\nif (data.state === 'waiting') {\n  console.warn('⏳ Task still waiting, need to retry...');\n  throw new Error('Task not ready yet, retry needed');\n}\n\nif (data.state !== 'success') {\n  console.error('❌ Unknown task state:', data.state);\n  throw new Error(`Unknown task state: ${data.state}`);\n}\n\n// ============================================\n// 2. EXTRACT GENERATED IMAGE URL\n// ============================================\n\nlet resultData;\ntry {\n  resultData = JSON.parse(data.resultJson);\n} catch (error) {\n  console.error('❌ Failed to parse resultJson:', error);\n  throw new Error('Invalid resultJson format');\n}\n\nconst generatedUrl = resultData.resultUrls?.[0];\n\nif (!generatedUrl) {\n  console.error('❌ No image URL found in response');\n  throw new Error('No generated image URL');\n}\n\nconsole.log('✅ Image generated successfully');\nconsole.log(`   Generated URL: ${generatedUrl}`);\nconsole.log(`   Generation time: ${data.costTime}s`);\n\n// ============================================\n// 3. GET ORIGINAL DATA FROM LOOP\n// ============================================\n\nlet loopData;\ntry {\n  loopData = $('Loop Over Items').first().json;\n  console.log('✅ Retrieved original data from Loop');\n} catch (e) {\n  console.error('❌ Could not access Loop Over Items1:', e.message);\n  throw new Error('Cannot retrieve original image data from loop');\n}\n\n// ============================================\n// 4. RETURN COMBINED DATA (ORIGINAL + GENERATED)\n// ============================================\n\nreturn {\n  json: {\n    // ===== ORIGINAL DATA FROM LOOP =====\n    listing_id: loopData.listing_id,\n    product_url: loopData.product_url,\n    product_title: loopData.product_title,\n    image_index: loopData.image_index,\n    image_url: loopData.image_url,  // Original image URL\n    is_original: loopData.is_original,\n    workflow_stage: loopData.workflow_stage,\n    processed_at: loopData.processed_at,\n    \n    // ===== GENERATED DATA =====\n    generated_url: generatedUrl,\n    generated_at: new Date(data.completeTime).toISOString(),\n    \n    // ===== GENERATION METADATA =====\n    task_id: data.taskId,\n    model: data.model,\n    generation_time: data.costTime,\n    api_state: data.state\n  }\n};\n"
+      },
+      "id": "0ea0e6b9-383e-4af7-bdaa-031d66eb7b70",
+      "name": "9️⃣ Parse Generation Result1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1520
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// FORMAT AGGREGATED DATA FOR GOOGLE SHEETS\n// ============================================\n\nconsole.log('📊 Formatting aggregated data for Google Sheets...');\n\n// ============================================\n// 1. GET ALL AGGREGATED ITEMS (FIX DATA WRAPPER)\n// ============================================\n\nlet allItems = $input.all();\n\n// Check if data is wrapped in a \"data\" array\nif (allItems.length === 1 && allItems[0].json.data && Array.isArray(allItems[0].json.data)) {\n  console.log('⚠️ Data is wrapped in \"data\" array, unwrapping...');\n  allItems = allItems[0].json.data.map(item => ({ json: item }));\n}\n\nif (!allItems || allItems.length === 0) {\n  throw new Error('No items received from Aggregate node');\n}\n\nconsole.log(`✅ Received ${allItems.length} items from Aggregate`);\n\n// ============================================\n// 2. SORT BY IMAGE_INDEX\n// ============================================\n\nconst sortedImages = allItems\n  .map(item => item.json)\n  .sort((a, b) => a.image_index - b.image_index);\n\nconsole.log(`   Sorted ${sortedImages.length} images by index`);\n\n// ============================================\n// 3. GET LISTING METADATA FROM FIRST IMAGE\n// ============================================\n\nconst firstImg = sortedImages[0];\nconst listingId = firstImg.listing_id;\nconst productUrl = firstImg.product_url;\nconst productTitle = firstImg.product_title;\n\nconsole.log(`   Listing ID: ${listingId}`);\nconsole.log(`   Product: ${productTitle}`);\n\n// ============================================\n// 4. BUILD GOOGLE SHEETS ROW (1 ROW = 1 LISTING)\n// ============================================\n\nconst sheetRow = {\n  // ===== LISTING METADATA =====\n  \"Listing ID\": listingId,\n  \"Product URL\": productUrl,\n  \"Product Title\": productTitle,\n  \"Processed At\": new Date().toISOString(),\n  \"Total Images\": sortedImages.length\n};\n\n// ===== ADD ALL 13 IMAGES =====\nfor (let i = 1; i <= 13; i++) {\n  const img = sortedImages[i - 1];  // Array is 0-indexed\n  \n  if (img) {\n    // Original image URL (from Etsy)\n    sheetRow[`Image ${i} Original URL`] = img.image_url || '';\n    \n    // Generated image URL (from SeeDream 4.5)\n    sheetRow[`Image ${i} Generated URL`] = img.generated_url || '';\n    \n    // Status\n    sheetRow[`Image ${i} Status`] = img.api_state || 'unknown';\n    \n    // Generation time (optional, for performance tracking)\n    sheetRow[`Image ${i} Generation Time`] = img.generation_time ? `${img.generation_time}s` : '';\n  } else {\n    // Fill empty slots (if less than 13 images processed)\n    sheetRow[`Image ${i} Original URL`] = '';\n    sheetRow[`Image ${i} Generated URL`] = '';\n    sheetRow[`Image ${i} Status`] = 'not_processed';\n    sheetRow[`Image ${i} Generation Time`] = '';\n  }\n}\n\nconsole.log('✅ Sheet row prepared');\nconsole.log(`   Total columns: ${Object.keys(sheetRow).length}`);\nconsole.log(`   Images: ${sortedImages.length}/13`);\n\n// ============================================\n// 5. RETURN FOR GOOGLE SHEETS\n// ============================================\n\nreturn { json: sheetRow };\n"
+      },
+      "id": "edd5fa36-a85f-4841-8ecc-474ece5f664a",
+      "name": "🔟 Aggregate All Images1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1136
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash-lite"
+        },
+        "text": "=**IMAGE ANALYSIS AND GENERATION PROMPT CREATOR**\n\nYour task is to analyze a product image with EXTREME precision and create a comprehensive text-to-image generation prompt for a SIMILAR but UNIQUE version.\n\n**CRITICAL RULE - ABSOLUTE ACCURACY:**\nYou MUST describe EXACTLY what you see in the image. If you see a human, write human. If you see a dog, write dog. If you see a cat, write cat. If you see an object, write that specific object. DO NOT imagine, assume, or hallucinate elements that are not present. DO NOT substitute one subject for another. Your analysis must be grounded in observable reality. The OUTPUT subject type MUST match the INPUT subject type - if input shows a person, output must describe a person; if input shows an animal, output must describe that animal type. NEVER change the fundamental nature of the subject.\n\nCAMERA ANGLE REQUIREMENT (MANDATORY):\nThe generated prompt MUST explicitly specify that the final image is captured from a perfectly straight-on, front-facing perspective at exact eye-level, with the camera aligned parallel to the subject and product surface.\n❗ No tilt, no low-angle, no high-angle, no three-quarter view, no dynamic perspective distortion is allowed.\nThis camera angle MUST be preserved and described clearly in the final generation prompt without altering any other visual elements.\n\n**YOUR TASK:**\nObserve everything in the image with forensic precision, then write ONE COMPLETE detailed prompt for generating a similar product with creative variations WITHIN THE SAME SUBJECT CATEGORY.\n\n---\n\n**OBSERVATION FRAMEWORK:**\n\n**1. Product Type & Presentation:**\n- Identify the exact product format: canvas print, framed poster, apparel, mug, digital art display, etc.\n- Document display method: held by hands, mounted on wall, flat lay photography, mockup presentation, lifestyle setting, etc.\n- Note any product-specific details: frame style, canvas texture visibility, material finish\n\n**2. Subject Identification (MOST CRITICAL):**\n- **PRECISELY identify the main subject:** Is it a human? An animal? If animal, what exact species/breed? An object? A scene? Abstract art? Text-based design?\n- **Document physical characteristics ACCURATELY:** Age range, gender presentation, facial features, body type, species-specific traits, breed characteristics\n- **Record pose and positioning:** Seated, standing, lying down, action pose, portrait orientation, three-quarter view, profile, etc.\n- **Capture expression and mood:** Serious, playful, regal, contemplative, aggressive, peaceful, neutral, etc.\n- **DO NOT confuse or conflate subjects** - if you see a human with a beard, do not describe it as a dog with fur. Verify your identification before proceeding.\n\n**3. Costume, Styling & Accessories:**\n- Clothing items and garments with specific details\n- Jewelry, crowns, headpieces, decorative elements\n- Armor, weapons, props, held objects\n- Fabrics and materials: velvet, silk, leather, metal, fur, etc.\n- Colors, patterns, textures of each element\n- Historical period or fantasy styling\n- Cultural or thematic costume elements\n\n**4. Artistic Style & Technique:**\n- Visual execution: photorealistic, oil painting style, watercolor, digital illustration, cartoon, 3D render, pencil sketch, mixed media, etc.\n- Rendering quality: hyperrealistic, painterly, stylized, impressionistic\n- Brush work or digital technique characteristics\n- Color palette: warm/cool, saturated/muted, specific color harmonies, contrast levels\n- Texture rendering: smooth gradients, visible brushstrokes, digital precision, textured overlays\n- Overall aesthetic: classical, Renaissance-inspired, Baroque, contemporary, fantasy art, Art Nouveau, etc.\n\n**5. Background & Setting Within Artwork:**\n- Background composition: landscape, interior scene, abstract, solid color, gradient, atmospheric effects\n- Specific environmental elements: mountains, buildings, clouds, battlefields, forests, architectural features\n- Depth and perspective: shallow, deep, atmospheric perspective\n- Background mood and tone\n- Weather or atmospheric conditions: fog, clear sky, storm, sunset, etc.\n\n**6. Physical Product Qualities:**\n- Canvas weave visibility and texture\n- Print surface: matte, semi-gloss, glossy finish\n- Frame characteristics: wood type, color, ornate vs. simple, width, decorative details\n- Material quality indicators\n- Edge treatment and mounting style\n\n**7. Environmental Context (Product Photo Setting):**\n- Wall color and texture\n- Wallpaper patterns or surface treatments\n- Surrounding furniture or architectural elements\n- Decorative items: sconces, candles, lighting fixtures, other wall decor\n- Room style and atmosphere\n- Spatial arrangement and symmetry\n\n**8. Lighting & Atmosphere:**\n- Primary light source: natural window light, artificial lighting, studio setup, ambient room lighting\n- Light direction: front-lit, side-lit, backlit, three-point lighting\n- Light quality: soft and diffused, hard and dramatic, warm, cool, mixed temperature\n- Shadow characteristics: deep shadows, soft shadows, minimal shadows\n- Candlelight or practical light sources in scene\n- Overall mood created by lighting: intimate, dramatic, regal, mysterious, welcoming\n\n**9. Composition & Framing:**\n- Subject placement: centered, rule of thirds, asymmetrical\n- Camera angle: eye-level, low angle, high angle, slightly tilted\n- Framing tightness: close-up, medium shot, wide shot\n- Symmetry and balance in composition\n- Visual weight distribution\n- Foreground and background relationship\n\n**10. Technical Photography Details:**\n- Image sharpness and focus\n- Depth of field: shallow with bokeh, deep focus throughout\n- Resolution indicators and clarity\n- Color grading and post-processing style\n- Professional quality markers\n- Sensor size implications (if discernible)\n\n---\n\n**WRITING YOUR GENERATION PROMPT:**\n\nCreate a single, comprehensive 2500-4000 character prompt describing a SIMILAR product with CREATIVE VARIATIONS.\n\n**MAINTAIN CONSISTENCY IN:**\n- **Subject TYPE (human remains human, dog remains dog, cat remains cat, etc.) - THIS IS NON-NEGOTIABLE**\n- Visual style and artistic technique\n- Composition structure and presentation format\n- Quality level and production values\n- Overall aesthetic mood and atmosphere\n- Product format and display method\n\n**INTRODUCE VARIATIONS IN:**\n- Specific subject details within the same category: different person (age, ethnicity, gender, facial features), different breed of same animal, different variety of same object\n- Color schemes: different palette while maintaining similar richness/intensity\n- Costume/styling details: different historical period, different cultural influence, different decorative elements\n- Accessory specifics: different jewelry designs, different weapons, different props\n- Background scene variations: different landscape, different architectural style, different atmospheric conditions\n- Environmental details: different wall colors, different room styling, different decorative elements\n\n**PROMPT STRUCTURE - CONTINUOUS NARRATIVE FORMAT:**\n\nWrite in ONE FLOWING PARAGRAPH with natural transitions between elements. Follow this progression:\n\n**Opening:** \"Professional product photography of [product type]:\" → **Product presentation context** (how displayed, room setting, wall details) → **Main subject identification and description** (precise type, characteristics, pose, expression) → **Costume and styling details** (garments, materials, colors, textures, accessories from head to toe) → **Artistic style and technique** (painting style, rendering method, color approach, texture treatment) → **Background within the artwork** (scene description, atmospheric elements, environmental details) → **Physical product characteristics** (canvas texture, frame details, finish type, material quality) → **Environmental setting details** (wall treatment, decorative elements, lighting fixtures, room atmosphere) → **Lighting description** (sources, direction, quality, color temperature, mood created) → **Composition and framing** (placement, angle, symmetry, visual balance) → **Technical photography specifications** (focus, depth of field, resolution quality, color grading) → **Material and texture rendering details** (how fabrics, metals, organic materials are depicted) → **Quality indicators and finishing touches** (professional execution, attention to detail, overall impression)\n\n---\n\n**ABSOLUTE PROHIBITIONS:**\n\n❌ **NEVER write:**\n- \"Analysis:\" or \"Observation:\" sections\n- \"Here is the prompt:\" or any meta-commentary\n- Bullet points, numbered lists, or section headers within the prompt\n- Your reasoning, thinking process, or explanations\n- Incomplete descriptions or placeholder text\n- \"Similar to\" or references to the original image\n\n❌ **NEVER change:**\n- The fundamental subject type (human to animal, animal to object, etc.)\n- The core artistic medium (oil painting to photograph, etc.)\n- The product format (canvas to poster, etc.)\n\n---\n\n**MANDATORY REQUIREMENTS:**\n\n✅ **ALWAYS:**\n- Begin IMMEDIATELY with \"Professional product photography of\"\n- Write in ONE continuous paragraph\n- Maintain 2500-4000 character length\n- Include every visual element you observe\n- Use precise, descriptive language throughout\n- Verify subject identification before writing\n- Keep variations within the same thematic and subject category\n- End only when all elements are completely described\n- Double-check that output subject matches input subject type\n\n---\n\n**QUALITY VERIFICATION CHECKLIST:**\n\nBefore finalizing, confirm:\n- [ ] Subject type in output matches subject type in input\n- [ ] All major visual elements are described\n- [ ] Artistic style is accurately captured\n- [ ] Variations are creative but appropriate\n- [ ] No bullet points or section breaks exist\n- [ ] Length meets 2500-4000 character requirement\n- [ ] Description flows naturally from start to finish\n- [ ] No meta-commentary or preamble included\n- [ ] Technical and material details are comprehensive\n- [ ] Lighting and atmosphere are thoroughly described\n\n---\n\n**NOW BEGIN YOUR PROMPT IMMEDIATELY - NO PREAMBLE, NO ANALYSIS SECTION, JUST THE GENERATION PROMPT:**",
+        "imageUrls": "={{ $json.image_url }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        336,
+        1296
+      ],
+      "id": "6c8696e8-2413-4a7b-8fc4-3f9c23559e5e",
+      "name": "Analyze an image 75-25 SD",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Yoi5nvfad0whGrt9",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// PARSE GEMINI → CREATE SEEDREAM 4.5 TXT2IMG PAYLOAD\n// Version: SeeDream 4.5 (3000 char limit, 4:3 aspect, high quality)\n// ============================================\n\nconst item = $input.first();\n\nconsole.log('📥 Processing Gemini analysis for SeeDream 4.5...');\n\n// ============================================\n// 1. EXTRACT GEMINI'S PROMPT\n// ============================================\nlet promptText = '';\n\ntry {\n  // Try standard Gemini response structure\n  promptText = item.json.content?.parts?.[0]?.text || '';\n  \n  // Fallback: array format\n  if (!promptText && Array.isArray(item.json)) {\n    promptText = item.json[0]?.content?.parts?.[0]?.text || '';\n  }\n  \n  // Fallback: direct text field\n  if (!promptText) {\n    promptText = item.json.text || '';\n  }\n  \n  if (!promptText) {\n    throw new Error('No text found in Gemini response');\n  }\n  \n  console.log(`✅ Gemini text extracted: ${promptText.length} chars`);\n  \n} catch (e) {\n  console.error('❌ Extraction failed:', e.message);\n  throw new Error('Could not extract text from Gemini response: ' + e.message);\n}\n\n// ============================================\n// 2. AGGRESSIVE CLEANING\n// ============================================\n\n// Remove markdown code blocks\npromptText = promptText\n  .replace(/```json\\s*/gi, '')\n  .replace(/```\\s*/g, '')\n  .trim();\n\n// Remove common wrapper phrases (case insensitive, comprehensive list)\nconst wrapperPatterns = [\n  /^Here'?s? the prompt:?\\s*/i,\n  /^Here'?s? a prompt:?\\s*/i,\n  /^The prompt is:?\\s*/i,\n  /^Here is a prompt for a similar image:?\\s*/i,\n  /^Here is the prompt:?\\s*/i,\n  /^Generation prompt:?\\s*/i,\n  /^Image generation prompt:?\\s*/i,\n  /^Prompt:?\\s*/i,\n  /^Based on .*?, here'?s? (?:the|a) prompt:?\\s*/i,\n  /^Analysis:?\\s*/i,\n  /^Image Analysis:?\\s*/i\n];\n\nfor (const pattern of wrapperPatterns) {\n  if (promptText.match(pattern)) {\n    promptText = promptText.replace(pattern, '').trim();\n    console.log('✅ Removed wrapper phrase');\n  }\n}\n\n// Extract generation section if analysis is included\nconst generationMarkers = [\n  /(?:Here is a prompt for a similar image|Here'?s? the prompt|Generation prompt):\\s*/i,\n  /\\n\\n(?=Professional product photography)/i,\n  /\\n\\n(?=A canvas print)/i,\n  /\\n\\n(?=Studio shot)/i\n];\n\nfor (const marker of generationMarkers) {\n  const match = promptText.match(marker);\n  if (match) {\n    const splitIndex = promptText.indexOf(match[0]) + match[0].length;\n    promptText = promptText.substring(splitIndex).trim();\n    console.log('✅ Extracted generation section after marker');\n    break;\n  }\n}\n\n// Remove leading/trailing quotes and whitespace\npromptText = promptText\n  .replace(/^[\"'\\s]+/, '')\n  .replace(/[\"'\\s]+$/, '')\n  .trim();\n\nconsole.log(`✅ After cleaning: ${promptText.length} chars`);\n\n// ============================================\n// 3. VALIDATE & ADJUST LENGTH FOR SEEDREAM 4.5 (MAX 3000 CHARS)\n// ============================================\n\nif (promptText.length === 0) {\n  throw new Error('Prompt is empty after cleaning');\n}\n\n// CRITICAL: SeeDream 4.5 has 3000 char limit (not 4999)\nif (promptText.length > 3000) {\n  console.warn(`⚠️ Prompt too long: ${promptText.length} chars, truncating to 3000 for SeeDream 4.5`);\n  \n  // Try to truncate at sentence boundary (last period before 3000)\n  const truncateAt = promptText.lastIndexOf('.', 2999);\n  \n  if (truncateAt > 2500) {\n    // Good sentence boundary found\n    promptText = promptText.substring(0, truncateAt + 1);\n    console.log(`✂️ Truncated at sentence: ${promptText.length} chars`);\n  } else {\n    // No good boundary, hard truncate at 3000\n    promptText = promptText.substring(0, 3000);\n    console.log(`✂️ Hard truncated: ${promptText.length} chars`);\n  }\n} else {\n  console.log(`✅ Prompt length OK: ${promptText.length} chars (max 3000 for SeeDream 4.5)`);\n}\n\nif (promptText.length < 500) {\n  console.warn(`⚠️ Prompt seems short: ${promptText.length} chars (expected 1500-2500 for quality results)`);\n}\n\n// ============================================\n// 4. GET LOOP CONTEXT\n// ============================================\nlet loopData = {};\n\ntry {\n  // Try to access loop node\n  loopData = $('Loop Over Items').first().json;\n  console.log('✅ Loop context retrieved');\n  console.log('   Listing ID:', loopData.listing_id || 'N/A');\n  console.log('   Image Index:', loopData.image_index || 'N/A');\n} catch (e) {\n  console.warn('⚠️ Could not access Loop Over Items1, using current item');\n  loopData = item.json;\n}\n\n// ============================================\n// 5. CREATE SEEDREAM 4.5 TXT2IMG PAYLOAD\n// ============================================\n\n// Configuration with NEW defaults for SeeDream 4.5\nconst aspectRatio = loopData.aspect_ratio || \"4:3\";  // NEW DEFAULT: 4:3 (not 1:1)\nconst quality = loopData.quality || \"high\";          // NEW DEFAULT: high = 4K output\nconst callBackUrl = loopData.callBackUrl || undefined;\n\n// Build API payload for SeeDream 4.5\nconst apiPayload = {\n  model: \"seedream/4.5-text-to-image\",  // NEW MODEL\n  input: {\n    prompt: promptText,\n    aspect_ratio: aspectRatio,\n    quality: quality  // \"high\" = 4K, \"basic\" = 2K\n  }\n};\n\n// Add callback URL only if exists\nif (callBackUrl) {\n  apiPayload.callBackUrl = callBackUrl;\n}\n\nconsole.log('📦 SeeDream 4.5 Payload Created');\nconsole.log('   Model:', apiPayload.model);\nconsole.log('   Aspect Ratio:', apiPayload.input.aspect_ratio);\nconsole.log('   Quality:', apiPayload.input.quality, '(high = 4K, basic = 2K)');\nconsole.log('   Callback URL:', callBackUrl || 'Not set');\nconsole.log('   Prompt Length:', promptText.length, '/ 3000 chars');\nconsole.log('   Prompt Preview:', promptText.substring(0, 150) + '...');\n\n// ============================================\n// 6. RETURN STRUCTURED OUTPUT\n// ============================================\nreturn {\n  json: {\n    // ===== API PAYLOAD (for HTTP Request node) =====\n    model: apiPayload.model,\n    input: apiPayload.input,\n    // Only include callBackUrl if it exists\n    ...(callBackUrl && { callBackUrl: callBackUrl }),\n    \n    // ===== METADATA (for tracking & aggregation) =====\n    listing_id: loopData.listing_id || loopData['Listing ID'] || 0,\n    image_index: loopData.image_index || loopData.index || 1,\n    original_url: loopData.image_url || loopData.original_url || loopData.url || '',\n    \n    // ===== PROMPT INFO (for debugging & quality check) =====\n    prompt_text: promptText,\n    prompt_length: promptText.length,\n    prompt_truncated: promptText.length >= 3000,  // CHANGED: 3000 limit\n    prompt_max_length: 3000,  // NEW: document the limit\n    \n    // ===== API INFO =====\n    api_provider: 'seedream-4.5',  // CHANGED\n    api_model: 'seedream/4.5-text-to-image',  // CHANGED\n    generation_mode: 'txt2img',\n    \n    // ===== CONFIGURATION =====\n    config: {\n      aspect_ratio: aspectRatio,\n      quality: quality,  // CHANGED: \"high\" or \"basic\"\n      has_callback: !!callBackUrl\n    },\n    \n    // ===== TIMESTAMP =====\n    processed_at: new Date().toISOString(),\n    workflow_stage: 'seedream_txt2img_ready'  // CHANGED\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1296
+      ],
+      "id": "94ab8db7-8c99-425f-8105-6cd94d2b03b0",
+      "name": "Parse Vision & Create Payload"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "minutes"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        -304,
+        1552
+      ],
+      "id": "c4649d6d-82f4-4ca0-8f82-0ccc421e2e83",
+      "name": "⏳ Wait 30s",
+      "webhookId": "188a55f6-168a-48bd-9f7f-b40e43618fd1"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1C56ST20ty7LRE1LiRS2hReHwC6oTXvY668Xq_93jseo",
+          "mode": "list",
+          "cachedResultName": "Etsy Shop Analysis",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1C56ST20ty7LRE1LiRS2hReHwC6oTXvY668Xq_93jseo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1626136244,
+          "mode": "list",
+          "cachedResultName": "CreatedListings",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1C56ST20ty7LRE1LiRS2hReHwC6oTXvY668Xq_93jseo/edit#gid=1626136244"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Image 1 URLs": "={{ $json[\"Image 1 Generated URL\"] }}",
+            "Original Image": "={{ $json[\"Image 1 Original URL\"] }}",
+            "Product URL": "={{ $json[\"Product URL\"] }}",
+            "Product Title": "={{ $json[\"Product Title\"] }}",
+            "Listing ID": "={{ $json[\"Listing ID\"] }}",
+            "Image 2 URLs": "={{ $json[\"Image 2 Generated URL\"] }}",
+            "Image 3 URLs": "={{ $json[\"Image 3 Generated URL\"] }}",
+            "Image 4 URLs": "={{ $json[\"Image 4 Generated URL\"] }}",
+            "Image 5 URLs": "={{ $json[\"Image 5 Generated URL\"] }}",
+            "Image 6 URLs": "={{ $json[\"Image 6 Generated URL\"] }}",
+            "Image 7 URLs": "={{ $json[\"Image 7 Generated URL\"] }}",
+            "Image 8 URLs": "={{ $json[\"Image 8 Generated URL\"] }}",
+            "Image 9 URLs": "={{ $json[\"Image 9 Generated URL\"] }}",
+            "Image 10 URLs": "={{ $json[\"Image 10 Generated URL\"] }}",
+            "Image 11 URLs": "={{ $json[\"Image 11 Generated URL\"] }}",
+            "Image 12 URLs": "={{ $json[\"Image 12 Generated URL\"] }}",
+            "Image 13 URLs": "={{ $json[\"Image 13 Generated URL\"] }}"
+          },
+          "matchingColumns": [
+            "Original Image"
+          ],
+          "schema": [
+            {
+              "id": "Listing ID",
+              "displayName": "Listing ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Product URL",
+              "displayName": "Product URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Original Image",
+              "displayName": "Original Image",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Product Title",
+              "displayName": "Product Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Description",
+              "displayName": "Description",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Tags",
+              "displayName": "Tags",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Price (USD)",
+              "displayName": "Price (USD)",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "ProductVideo",
+              "displayName": "ProductVideo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Image 1 URLs",
+              "displayName": "Image 1 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 2 URLs",
+              "displayName": "Image 2 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 3 URLs",
+              "displayName": "Image 3 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 4 URLs",
+              "displayName": "Image 4 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 5 URLs",
+              "displayName": "Image 5 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 6 URLs",
+              "displayName": "Image 6 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 7 URLs",
+              "displayName": "Image 7 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 8 URLs",
+              "displayName": "Image 8 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 9 URLs",
+              "displayName": "Image 9 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 10 URLs",
+              "displayName": "Image 10 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 11 URLs",
+              "displayName": "Image 11 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 12 URLs",
+              "displayName": "Image 12 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image 13 URLs",
+              "displayName": "Image 13 URLs",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Variations",
+              "displayName": "Variations",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        912,
+        1136
+      ],
+      "id": "e3ff49d5-fd46-4995-98ca-9d9d2c031e4e",
+      "name": "Append row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "8PkDpWp58LR3yyYR",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.kie.ai/api/v1/jobs/createTask",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"input\": {{ JSON.stringify($json.input) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -576,
+        1552
+      ],
+      "id": "11baf283-75d4-4a4f-9346-08aa76a13a40",
+      "name": "SeeDream4.5",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "nUJ5csjX44qAzeAo",
+          "name": "RapidApi"
+        },
+        "httpBearerAuth": {
+          "id": "gM3NC7K1oPdMCFw5",
+          "name": "Kie"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        352,
+        1136
+      ],
+      "id": "e733e6cd-8ae9-439d-b548-b93931774984",
+      "name": "Aggregate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "04689dd4-1974-42ad-bb34-82e96c3dbe38",
+              "leftValue": "={{ $json.data.state }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        336,
+        1536
+      ],
+      "id": "fe3c33ba-a701-4da8-8aeb-4fd5bfad0bc1",
+      "name": "8️⃣ Is Complete?2",
+      "retryOnFail": true,
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://api.kie.ai/api/v1/jobs/recordInfo",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "taskId",
+              "value": "={{ $('SeeDream4.5').item.json.data.taskId }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        32,
+        1552
+      ],
+      "id": "0f1ff614-52e6-4c9a-a0d2-2d4c7a48d490",
+      "name": "7️⃣ Check Generation Status",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Qullb8xcJPwGlhcS",
+          "name": "KieApi"
+        },
+        "httpBearerAuth": {
+          "id": "gM3NC7K1oPdMCFw5",
+          "name": "Kie"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        32,
+        1280
+      ],
+      "id": "925aa8c1-c8fb-4eed-b382-b1e705bb7b79",
+      "name": "Loop Over Items"
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "Image 1 URLs": "https://i.etsystatic.com/33303477/r/il/bc04c5/5071592301/il_fullxfull.5071592301_69xh.jpg",
+          "Image 2 URLs": "https://i.etsystatic.com/33303477/r/il/0d398e/5199955913/il_fullxfull.5199955913_sm9p.jpg",
+          "Image 3 URLs": "https://i.etsystatic.com/33303477/r/il/a47214/3961272888/il_fullxfull.3961272888_5hmp.jpg",
+          "Image 4 URLs": "https://i.etsystatic.com/33303477/r/il/c01c62/5199956143/il_fullxfull.5199956143_9ihs.jpg",
+          "Image 5 URLs": "https://i.etsystatic.com/33303477/r/il/c480f4/5199956251/il_fullxfull.5199956251_4mxe.jpg",
+          "Image 6 URLs": "https://i.etsystatic.com/33303477/r/il/158e12/5185743138/il_fullxfull.5185743138_hghv.jpg",
+          "Image 7 URLs": "https://i.etsystatic.com/33303477/r/il/1e1aed/3875209809/il_fullxfull.3875209809_k6fy.jpg",
+          "Image 8 URLs": "https://i.etsystatic.com/33303477/r/il/3c68e6/7023083817/il_fullxfull.7023083817_d9a0.jpg",
+          "Image 9 URLs": "https://i.etsystatic.com/33303477/r/il/50f576/3827700104/il_fullxfull.3827700104_1syv.jpg",
+          "Image 10 URLs": "https://i.etsystatic.com/33303477/r/il/2a8059/6131146146/il_fullxfull.6131146146_auzk.jpg",
+          "Image 11 URLs": "",
+          "Image 12 URLs": "",
+          "Image 13 URLs": "",
+          "Product URL": "https://www.etsy.com/listing/1255899617/custom-royal-portrait-from-photo",
+          "Listing ID": "1255899617",
+          "Product Title": "Custom Royal Portrait from Photo, Renaissance Portrait, Historical Portrait, Royal Portrait, Human Portrait, Custom Men Women Portrait"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "1️⃣ Pre-Process Images1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "1️⃣ Pre-Process Images1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "9️⃣ Parse Generation Result1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze an image 75-25 SD": {
+      "main": [
+        [
+          {
+            "node": "Parse Vision & Create Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Vision & Create Payload": {
+      "main": [
+        [
+          {
+            "node": "SeeDream4.5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "7️⃣ Check Generation Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔟 Aggregate All Images1": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SeeDream4.5": {
+      "main": [
+        [
+          {
+            "node": "⏳ Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "🔟 Aggregate All Images1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "8️⃣ Is Complete?2": {
+      "main": [
+        [
+          {
+            "node": "9️⃣ Parse Generation Result1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⏳ Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "7️⃣ Check Generation Status": {
+      "main": [
+        [
+          {
+            "node": "8️⃣ Is Complete?2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analyze an image 75-25 SD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "0bb47243-9186-44a6-8df9-17bb462723dc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "57ef3a5678ce5fbf6229c0f98eefe7b71f8687990d6ff4495080909369da5f9a"
+  },
+  "id": "T3Yko7Ofh0oISflE",
+  "tags": []
+}
