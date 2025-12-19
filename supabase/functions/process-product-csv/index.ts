@@ -37,53 +37,55 @@ interface ProductDetails {
   };
 }
 
-// Mock RapidAPI response - simulates real product details API
-function mockRapidApiResponse(productId: string, title: string): ProductDetails {
-  const categories = ['Jewelry', 'Home & Living', 'Clothing', 'Art & Collectibles', 'Craft Supplies'];
-  const tagSets = [
-    ['handmade', 'vintage', 'unique', 'gift'],
-    ['boho', 'minimalist', 'modern', 'rustic'],
-    ['custom', 'personalized', 'engraved', 'monogram'],
-  ];
-  
-  const numImages = Math.floor(Math.random() * 5) + 3; // 3-7 images
-  const images = Array.from({ length: numImages }, (_, i) => 
-    `https://i.etsystatic.com/product-${productId}-${i + 1}.jpg`
-  );
-  
-  const hasVariations = Math.random() > 0.5;
-  const variations = hasVariations ? [
-    {
-      name: 'Size',
-      options: ['Small', 'Medium', 'Large'],
-      prices: {
-        'Small': Math.floor(Math.random() * 20) + 10,
-        'Medium': Math.floor(Math.random() * 25) + 15,
-        'Large': Math.floor(Math.random() * 30) + 20,
-      },
+// Fetch real product details from RapidAPI Etsy API
+async function fetchProductDetails(listingId: string, rapidApiKey: string): Promise<ProductDetails> {
+  const url = new URL('https://etsy-api2.p.rapidapi.com/product/description/v5');
+  url.searchParams.append('listingId', listingId);
+  url.searchParams.append('currency', 'USD');
+  url.searchParams.append('language', 'en-US');
+  url.searchParams.append('country', 'US');
+
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'x-rapidapi-host': 'etsy-api2.p.rapidapi.com',
+      'x-rapidapi-key': rapidApiKey,
     },
-    {
-      name: 'Color',
-      options: ['Black', 'White', 'Blue', 'Red'],
-    },
-  ] : [];
-  
-  const basePrice = Math.floor(Math.random() * 80) + 20;
-  const randomTags = tagSets[Math.floor(Math.random() * tagSets.length)];
-  
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`RapidAPI error: ${response.status} - ${errorText}`);
+  }
+
+  const apiData = await response.json();
+
+  // Transform RapidAPI response to our ProductDetails format
+  const images = apiData.images?.map((img: any) => img.url_fullxfull || img.url_570xN) || [];
+  const variations = apiData.variations?.map((v: any) => ({
+    name: v.formatted_name || v.property_name,
+    options: v.values || [],
+    prices: v.option_values?.reduce((acc: any, opt: any) => {
+      if (opt.value && opt.price) {
+        acc[opt.value] = opt.price.amount / opt.price.divisor;
+      }
+      return acc;
+    }, {}),
+  })) || [];
+
   return {
-    productId,
-    title,
-    description: `Beautiful handcrafted ${title}. Made with high-quality materials and attention to detail. Perfect for gifts or personal use. Each piece is unique and made to order.\n\nFeatures:\n- Handmade with care\n- High-quality materials\n- Unique design\n- Fast shipping\n\nCare Instructions:\nHandle with care and store in a dry place.`,
-    price: basePrice,
-    images,
+    productId: listingId,
+    title: apiData.title || 'Unknown Product',
+    description: apiData.description || '',
+    price: apiData.price ? (apiData.price.amount / apiData.price.divisor) : 0,
+    images: images.slice(0, 10),
     variations,
-    tags: [...randomTags, title.toLowerCase().split(' ')[0]],
-    category: categories[Math.floor(Math.random() * categories.length)],
+    tags: apiData.tags || [],
+    category: apiData.taxonomy_path?.[0] || 'Uncategorized',
     shopInfo: {
-      shopName: `Shop${Math.floor(Math.random() * 1000)}`,
-      shopUrl: `https://www.etsy.com/shop/Shop${Math.floor(Math.random() * 1000)}`,
-      rating: Math.round((Math.random() * 1 + 4) * 10) / 10, // 4.0 - 5.0
+      shopName: apiData.shop?.shop_name || 'Unknown Shop',
+      shopUrl: apiData.shop?.url || '',
+      rating: apiData.shop?.review_average || 0,
     },
   };
 }
@@ -216,29 +218,52 @@ Deno.serve(async (req: Request) => {
         throw new Error('No valid products found in CSV');
       }
 
+      // Get RapidAPI key from environment
+      const rapidApiKey = Deno.env.get('RAPIDAPI_KEY');
+      if (!rapidApiKey) {
+        throw new Error('RAPIDAPI_KEY environment variable is not set');
+      }
+
       // Process each product (in batches to avoid timeout)
-      const batchSize = 10;
+      const batchSize = 5;
       const processedProducts: any[] = [];
-      
+
       for (let i = 0; i < csvRows.length; i += batchSize) {
         const batch = csvRows.slice(i, i + batchSize);
-        
-        // Simulate calling RapidAPI for each product (mock data for now)
+
+        // Fetch real product details from RapidAPI
         const batchResults = await Promise.all(
           batch.map(async (row) => {
-            const details = mockRapidApiResponse(row.productId, row.title);
-            return {
-              upload_id: uploadId,
-              original_product_id: details.productId,
-              product_title: details.title,
-              description: details.description,
-              price: details.price,
-              images: details.images,
-              variations: details.variations,
-              tags: details.tags,
-              category: details.category,
-              shop_info: details.shopInfo,
-            };
+            try {
+              const details = await fetchProductDetails(row.productId, rapidApiKey);
+              return {
+                upload_id: uploadId,
+                original_product_id: details.productId,
+                product_title: details.title,
+                description: details.description,
+                price: details.price,
+                images: details.images,
+                variations: details.variations,
+                tags: details.tags,
+                category: details.category,
+                shop_info: details.shopInfo,
+              };
+            } catch (error) {
+              console.error(`Failed to fetch product ${row.productId}:`, error);
+              // Return minimal data if API call fails
+              return {
+                upload_id: uploadId,
+                original_product_id: row.productId,
+                product_title: row.title,
+                description: `Product ${row.productId}`,
+                price: 0,
+                images: [],
+                variations: [],
+                tags: [],
+                category: 'Unknown',
+                shop_info: { shopName: 'Unknown', shopUrl: '', rating: 0 },
+              };
+            }
           })
         );
 
