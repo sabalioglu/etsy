@@ -1,6 +1,7 @@
 import { ReactNode, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Home, Search, Package, Copy, Video, History, Menu, X, User, LogOut } from 'lucide-react'
+import { supabase } from '../../lib/supabase'
 
 interface LayoutProps {
   children: ReactNode
@@ -17,11 +18,17 @@ const navigationItems = [
 
 export function Layout({ children }: LayoutProps) {
   const location = useLocation()
+  const navigate = useNavigate()
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
 
   const isActive = (path: string) => {
     return location.pathname === path
+  }
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut()
+    navigate('/login')
   }
 
   return (
@@ -124,7 +131,10 @@ export function Layout({ children }: LayoutProps) {
                       <User className="w-4 h-4 mr-3" />
                       Profile
                     </button>
-                    <button className="w-full flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                    <button
+                      onClick={handleSignOut}
+                      className="w-full flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                    >
                       <LogOut className="w-4 h-4 mr-3" />
                       Sign Out
                     </button>
