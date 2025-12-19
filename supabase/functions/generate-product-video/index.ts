@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 }
 
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY') || ''
+const GEMINI_API_KEY = Deno.env.get('GOOGLE_GEMINI_API_KEY') || ''
 const KIE_API_KEY = Deno.env.get('KIE_API_KEY') || ''
 
 interface VideoGenerationRequest {
