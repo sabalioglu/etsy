@@ -5,6 +5,7 @@ import Button from '../components/shared/Button'
 import Input from '../components/shared/Input'
 import LoadingSpinner from '../components/shared/LoadingSpinner'
 import { analyzeShop, getAnalyzedProducts, subscribeToAnalysis } from '../lib/api'
+import { supabase } from '../lib/supabase'
 
 interface Product {
   id: string
@@ -41,11 +42,36 @@ export function ShopAnalyzer() {
         } else if (analysis.status === 'failed') {
           setError(analysis.error_message || 'Analysis failed')
           setAnalyzing(false)
+          setProgress(0)
         }
       })
 
+      const pollInterval = setInterval(async () => {
+        try {
+          const { data } = await supabase
+            .from('shop_analyses')
+            .select('status, error_message')
+            .eq('id', analysisId)
+            .single()
+
+          if (data?.status === 'completed') {
+            setProgress(100)
+            loadProducts(analysisId)
+            clearInterval(pollInterval)
+          } else if (data?.status === 'failed') {
+            setError(data.error_message || 'Analysis failed')
+            setAnalyzing(false)
+            setProgress(0)
+            clearInterval(pollInterval)
+          }
+        } catch (err) {
+          console.error('Error polling analysis status:', err)
+        }
+      }, 3000)
+
       return () => {
         channel.then((c) => c.unsubscribe())
+        clearInterval(pollInterval)
       }
     }
   }, [analysisId])

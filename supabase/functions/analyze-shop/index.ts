@@ -53,6 +53,8 @@ async function fetchShopDataFromApify(shopName: string, numberOfProducts: number
       body: JSON.stringify({
         startUrls: [{ url: `https://www.etsy.com/shop/${shopName}` }],
         maxItems: numberOfProducts,
+        maxCrawledItems: numberOfProducts,
+        maxResults: numberOfProducts,
         scrapeProductDetails: true,
         proxy: {
           useApifyProxy: true,
