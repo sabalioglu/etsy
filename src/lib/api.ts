@@ -4,25 +4,29 @@ export async function analyzeShop(shopUrl: string, shopName: string, numberOfPro
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) throw new Error('Not authenticated')
 
-  const response = await supabase.functions.invoke('analyze-shop', {
-    body: {
-      shopName,
-      numberOfProducts
-    }
-  })
-
-  if (response.error) throw response.error
-
-  const analysisId = response.data?.data?.shopAnalysisId
-  if (!analysisId) throw new Error('Failed to get analysis ID from response')
-
   const { data: analysis, error: analysisError } = await supabase
     .from('shop_analyses')
+    .insert({
+      user_id: user.id,
+      shop_url: shopUrl,
+      shop_name: shopName,
+      total_products: numberOfProducts,
+      status: 'pending'
+    })
     .select()
-    .eq('id', analysisId)
     .single()
 
   if (analysisError) throw analysisError
+
+  supabase.functions.invoke('analyze-shop', {
+    body: {
+      analysisId: analysis.id,
+      shopName,
+      numberOfProducts
+    }
+  }).catch((error) => {
+    console.error('Edge function invocation error (non-blocking):', error)
+  })
 
   return analysis
 }

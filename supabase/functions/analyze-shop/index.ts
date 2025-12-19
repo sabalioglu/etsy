@@ -8,6 +8,7 @@ const corsHeaders = {
 };
 
 interface AnalyzeShopRequest {
+  analysisId: string;
   shopName: string;
   numberOfProducts: number;
 }
@@ -239,30 +240,23 @@ Deno.serve(async (req: Request) => {
 
     // Parse request body
     const body: AnalyzeShopRequest = await req.json();
-    const { shopName, numberOfProducts } = body;
+    const { analysisId, shopName, numberOfProducts } = body;
 
-    if (!shopName || !numberOfProducts) {
+    if (!analysisId || !shopName || !numberOfProducts) {
       return new Response(
-        JSON.stringify({ error: 'Missing required fields: shopName, numberOfProducts' }),
+        JSON.stringify({ error: 'Missing required fields: analysisId, shopName, numberOfProducts' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Create shop analysis record
-    const { data: shopAnalysis, error: analysisError } = await supabase
+    // Update shop analysis to processing status
+    const { error: updateError } = await supabase
       .from('shop_analyses')
-      .insert({
-        user_id: user.id,
-        shop_name: shopName,
-        shop_url: `https://www.etsy.com/shop/${shopName}`,
-        status: 'processing',
-        total_products: numberOfProducts,
-      })
-      .select()
-      .single();
+      .update({ status: 'processing' })
+      .eq('id', analysisId);
 
-    if (analysisError) {
-      throw new Error(`Failed to create shop analysis: ${analysisError.message}`);
+    if (updateError) {
+      throw new Error(`Failed to update shop analysis: ${updateError.message}`);
     }
 
     try {
@@ -296,7 +290,7 @@ Deno.serve(async (req: Request) => {
       // Store analyzed products
       console.log('Preparing products for database insertion...');
       const productsToInsert = scoredProducts.map(product => ({
-        shop_analysis_id: shopAnalysis.id,
+        shop_analysis_id: analysisId,
         product_id: product.productId,
         product_title: product.title,
         product_url: product.url,
@@ -327,17 +321,17 @@ Deno.serve(async (req: Request) => {
       console.log('Products inserted successfully');
 
       // Update shop analysis with completion status
-      const { error: updateError } = await supabase
+      const { error: completeError } = await supabase
         .from('shop_analyses')
         .update({
           status: 'completed',
           average_score: averageScore,
           completed_at: new Date().toISOString(),
         })
-        .eq('id', shopAnalysis.id);
+        .eq('id', analysisId);
 
-      if (updateError) {
-        throw new Error(`Failed to update shop analysis: ${updateError.message}`);
+      if (completeError) {
+        throw new Error(`Failed to update shop analysis: ${completeError.message}`);
       }
 
       // Log API usage (for Apify call)
@@ -353,7 +347,7 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           success: true,
           data: {
-            shopAnalysisId: shopAnalysis.id,
+            shopAnalysisId: analysisId,
             shopName,
             totalProducts: numberOfProducts,
             averageScore: Math.round(averageScore * 100) / 100,
@@ -377,7 +371,7 @@ Deno.serve(async (req: Request) => {
           status: 'failed',
           error_message: error instanceof Error ? error.message : 'Unknown error',
         })
-        .eq('id', shopAnalysis.id);
+        .eq('id', analysisId);
 
       throw error;
     }
