@@ -1,6 +1,6 @@
 import { ReactNode, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { Home, Search, Package, Copy, History, Menu, X, User, LogOut } from 'lucide-react'
+import { Home, Search, Package, Copy, Video, History, Menu, X, User, LogOut } from 'lucide-react'
 
 interface LayoutProps {
   children: ReactNode
@@ -11,6 +11,7 @@ const navigationItems = [
   { path: '/analyze', label: 'Shop Analyzer', icon: Search },
   { path: '/products', label: 'Product Selection', icon: Package },
   { path: '/clone', label: 'Product Cloner', icon: Copy },
+  { path: '/videos', label: 'Video Generator', icon: Video },
   { path: '/history', label: 'History', icon: History },
 ]
 

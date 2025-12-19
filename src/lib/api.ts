@@ -320,3 +320,126 @@ export async function generateImagesFromProducts(products: any[]) {
 
   return results
 }
+
+export async function generateProductVideo(data: {
+  clonedProductId?: string
+  listingId: string
+  productTitle: string
+  productDescription?: string
+  productTags?: string[]
+  heroImageUrl: string
+}) {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) throw new Error('Not authenticated')
+
+  const { data: job, error: jobError } = await supabase
+    .from('video_generation_jobs')
+    .insert({
+      user_id: user.id,
+      cloned_product_id: data.clonedProductId || null,
+      listing_id: data.listingId,
+      product_title: data.productTitle,
+      hero_image_url: data.heroImageUrl,
+      status: 'pending'
+    })
+    .select()
+    .single()
+
+  if (jobError) throw jobError
+
+  const response = await supabase.functions.invoke('generate-product-video', {
+    body: {
+      jobId: job.id,
+      listingId: data.listingId,
+      productTitle: data.productTitle,
+      productDescription: data.productDescription,
+      productTags: data.productTags,
+      heroImageUrl: data.heroImageUrl
+    }
+  })
+
+  if (response.error) throw response.error
+
+  return { jobId: job.id, ...response.data }
+}
+
+export async function getVideoGenerationJobs() {
+  const { data, error } = await supabase
+    .from('video_generation_jobs')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (error) throw error
+  return data
+}
+
+export async function getVideoGenerationJob(jobId: string) {
+  const { data, error } = await supabase
+    .from('video_generation_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function subscribeToVideoJob(jobId: string, callback: (payload: any) => void) {
+  return supabase
+    .channel(`video-job:${jobId}`)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'video_generation_jobs',
+        filter: `id=eq.${jobId}`
+      },
+      callback
+    )
+    .subscribe()
+}
+
+export async function generateVideosFromProducts(products: any[]) {
+  const results = []
+
+  for (const product of products) {
+    try {
+      const heroImageUrl = product.cloned_product_images?.[0]?.image_url ||
+                          product.generated_image_1 ||
+                          product.image_url
+
+      if (!heroImageUrl) {
+        results.push({
+          success: false,
+          productId: product.id,
+          error: 'No hero image found'
+        })
+        continue
+      }
+
+      const result = await generateProductVideo({
+        clonedProductId: product.id,
+        listingId: product.original_product_id || product.listing_id || product.id,
+        productTitle: product.generated_title || product.product_title || 'Untitled Product',
+        productDescription: product.generated_description || product.description,
+        productTags: product.generated_tags || product.tags || [],
+        heroImageUrl
+      })
+
+      results.push({
+        success: true,
+        productId: product.id,
+        jobId: result.jobId
+      })
+    } catch (error) {
+      results.push({
+        success: false,
+        productId: product.id,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  return results
+}
