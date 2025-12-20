@@ -16,20 +16,32 @@ interface AnalyzedProduct {
   product_url: string
   price: number
   original_price: number
+  discount_percentage: number
   image_url: string
   advanced_sales_score: number
   product_tier: string
   num_favorers: number
+  num_favorers_source: string
   in_cart_count: number
   is_bestseller: boolean
   is_top_rated: boolean
   is_star_seller: boolean
+  is_personalizable: boolean
   has_video: boolean
   has_free_shipping: boolean
   variation_count: number
-  quantity: number
+  variations_text: string
+  stock_quantity: number
   shop_sales: number
   shop_average_rating: number
+  rating: number
+  reviews_count: number
+  listing_review_photo_count: number
+  listing_review_video_count: number
+  image_count: number
+  last_sale_hours_ago: number
+  listing_age_days: number
+  processing_time_days: string
   create_date: string
   last_sale_date: string
 }
@@ -402,41 +414,83 @@ export function AnalysisResults() {
                           {product.advanced_sales_score}
                         </span>
                       </div>
-                      <h3 className="font-semibold text-gray-900 text-lg truncate mb-1">
+                      <h3 className="font-semibold text-gray-900 text-lg mb-2">
                         {product.product_title}
                       </h3>
-                      <div className="flex items-center space-x-4 text-sm text-gray-600">
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm text-gray-600 mb-2">
                         <span className="flex items-center">
-                          <Heart className="w-4 h-4 mr-1" />
+                          <Heart className="w-4 h-4 mr-1.5" />
                           {product.num_favorers.toLocaleString()} favorites
+                          <span className="text-xs text-gray-400 ml-1">({product.num_favorers_source})</span>
                         </span>
                         <span className="flex items-center">
-                          <ShoppingCart className="w-4 h-4 mr-1" />
+                          <ShoppingCart className="w-4 h-4 mr-1.5" />
                           {product.in_cart_count} in carts
                         </span>
-                        {product.variation_count > 0 && (
-                          <span>{product.variation_count} variations</span>
+                        <span className="flex items-center">
+                          <Star className="w-4 h-4 mr-1.5" />
+                          {product.rating ? product.rating.toFixed(1) : 'N/A'} ({product.reviews_count} reviews)
+                        </span>
+                        <span className="flex items-center">
+                          {product.variations_text || 'No variations'}
+                        </span>
+                        <span className="flex items-center">
+                          {product.image_count} images
+                        </span>
+                        {product.last_sale_hours_ago !== null && product.last_sale_hours_ago < 1000 && (
+                          <span className="text-green-600">
+                            Last sale: {product.last_sale_hours_ago < 1 ? '<1h' : `${product.last_sale_hours_ago}h`} ago
+                          </span>
                         )}
+                        {product.listing_age_days !== null && (
+                          <span>
+                            Age: {product.listing_age_days} days
+                          </span>
+                        )}
+                        <span className="flex items-center">
+                          Photo reviews: {product.listing_review_photo_count}
+                        </span>
+                        <span className="flex items-center">
+                          Video reviews: {product.listing_review_video_count}
+                        </span>
+                        <span>
+                          Stock: {product.stock_quantity}
+                        </span>
                       </div>
                     </div>
                     <div className="text-right flex-shrink-0">
                       <div className="text-2xl font-bold text-gray-900">
                         ${product.price.toFixed(2)}
                       </div>
-                      {product.original_price > product.price && (
-                        <div className="text-sm text-gray-500 line-through">
-                          ${product.original_price.toFixed(2)}
+                      {product.original_price && product.original_price > product.price && (
+                        <>
+                          <div className="text-sm text-gray-500 line-through">
+                            ${product.original_price.toFixed(2)}
+                          </div>
+                          {product.discount_percentage && (
+                            <div className="text-xs text-green-600 font-semibold">
+                              {product.discount_percentage}% OFF
+                            </div>
+                          )}
+                        </>
+                      )}
+                      {product.processing_time_days && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          Processing: {product.processing_time_days}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-2 mb-3">
+                  <div className="flex items-center flex-wrap gap-2 mb-3">
                     {product.is_bestseller && (
                       <Badge status="completed">Bestseller</Badge>
                     )}
                     {product.is_star_seller && (
                       <Badge status="completed">Star Seller</Badge>
+                    )}
+                    {product.is_top_rated && (
+                      <Badge status="completed">Top Rated</Badge>
                     )}
                     {product.has_video && (
                       <Badge status="processing">Video</Badge>
@@ -444,12 +498,16 @@ export function AnalysisResults() {
                     {product.has_free_shipping && (
                       <Badge status="pending">Free Ship</Badge>
                     )}
+                    {product.is_personalizable && (
+                      <Badge status="processing">Personalizable</Badge>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-4 text-xs text-gray-500">
-                      <span>Stock: {product.quantity}</span>
-                      <span>Rating: {product.shop_average_rating.toFixed(1)}</span>
+                      <span>Shop Sales: {product.shop_sales.toLocaleString()}</span>
+                      <span>Shop Rating: {product.shop_average_rating.toFixed(1)}</span>
+                      <span>Listing ID: {product.product_id}</span>
                     </div>
                     <a
                       href={product.product_url}

@@ -467,42 +467,64 @@ Deno.serve(async (req: Request) => {
       const averageScore = scoredProducts.reduce((sum, p) => sum + p.advanced_sales_score, 0) / scoredProducts.length;
 
       console.log('Preparing products for database insertion...');
-      const productsToInsert = scoredProducts.map(product => ({
-        shop_analysis_id: analysisId,
-        product_id: product.listing_id,
-        product_title: product.title,
-        product_url: product.url,
-        price: product.price,
-        original_price: product.discounted_price,
-        image_url: product.image_url,
-        rating: product.rating,
-        reviews_count: product.reviews_count,
-        sales_count: product.sales_count,
-        score: product.advanced_sales_score,
-        tier: product.product_tier,
-        in_cart_count: product.in_cart_count,
-        num_favorers: product.num_favorers,
-        num_favorers_source: product.num_favorers_source,
-        num_favorers_confidence: product.num_favorers_confidence,
-        listing_review_photo_count: product.listing_review_photo_count,
-        listing_review_video_count: product.listing_review_video_count,
-        variation_count: product.variation_count,
-        has_video: product.has_video,
-        image_count: product.image_count,
-        is_top_rated: product.is_top_rated,
-        has_free_shipping: product.has_free_shipping,
-        shop_average_rating: product.shop_average_rating,
-        shop_total_rating_count: product.shop_total_rating_count,
-        is_star_seller: product.is_star_seller,
-        shop_sales: product.shop_sales,
-        advanced_sales_score: product.advanced_sales_score,
-        score_breakdown: product.score_breakdown,
-        product_tier: product.product_tier,
-        tier_description: product.tier_description,
-        scoring_version: product.scoring_version,
-        is_2025_compliant: product.is_2025_compliant,
-        needs_urgent_action: product.needs_urgent_action,
-      }));
+      const now = Date.now();
+      const productsToInsert = scoredProducts.map(product => {
+        const lastSaleHoursAgo = product.last_sale_date
+          ? Math.floor((now - product.last_sale_date) / 3600000)
+          : null;
+
+        const listingAgeDays = product.original_create_date || product.create_date
+          ? Math.floor((now - (product.original_create_date || product.create_date)) / 86400000)
+          : null;
+
+        const variationsText = product.variation_count > 0
+          ? `${product.variation_count} variation${product.variation_count > 1 ? 's' : ''}`
+          : 'No variations';
+
+        return {
+          shop_analysis_id: analysisId,
+          product_id: product.listing_id,
+          product_title: product.title,
+          product_url: product.url,
+          price: product.price,
+          original_price: product.discounted_price,
+          image_url: product.image_url,
+          rating: product.rating,
+          reviews_count: product.reviews_count,
+          sales_count: product.sales_count,
+          score: product.advanced_sales_score,
+          tier: product.product_tier,
+          in_cart_count: product.in_cart_count,
+          num_favorers: product.num_favorers,
+          num_favorers_source: product.num_favorers_source,
+          num_favorers_confidence: product.num_favorers_confidence,
+          listing_review_photo_count: product.listing_review_photo_count,
+          listing_review_video_count: product.listing_review_video_count,
+          variation_count: product.variation_count,
+          has_video: product.has_video,
+          image_count: product.image_count,
+          is_top_rated: product.is_top_rated,
+          has_free_shipping: product.has_free_shipping,
+          shop_average_rating: product.shop_average_rating,
+          shop_total_rating_count: product.shop_total_rating_count,
+          is_star_seller: product.is_star_seller,
+          shop_sales: product.shop_sales,
+          advanced_sales_score: product.advanced_sales_score,
+          score_breakdown: product.score_breakdown,
+          product_tier: product.product_tier,
+          tier_description: product.tier_description,
+          scoring_version: product.scoring_version,
+          is_2025_compliant: product.is_2025_compliant,
+          needs_urgent_action: product.needs_urgent_action,
+          last_sale_hours_ago: lastSaleHoursAgo,
+          listing_age_days: listingAgeDays,
+          is_bestseller: product.is_bestseller,
+          is_personalizable: product.is_personalizable,
+          stock_quantity: product.quantity,
+          processing_time_days: '1-5 days',
+          variations_text: variationsText,
+        };
+      });
 
       console.log(`Inserting ${productsToInsert.length} products into database...`);
 
